@@ -1,5 +1,7 @@
 # Finance Exporter
 
+![Build Status](https://github.com/sjgorey/finance-exporter/actions/workflows/build-and-push.yml/badge.svg)
+
 A Prometheus exporter that monitors stock prices and financial metrics from Yahoo Finance.
 
 ## Overview
@@ -30,6 +32,19 @@ The application is configured using environment variables:
 - **TZ**: Timezone for market hours calculation
 
 ## Building and Pushing the Container Image
+
+### Automated Builds (Recommended)
+
+This repository includes GitHub Actions for automatic building and publishing:
+
+- **Automatic builds** on every push to `main` branch
+- **Multi-platform support** (AMD64 and ARM64)  
+- **Automatic tagging** based on Git refs
+- **Security attestation** for build provenance
+
+See [GitHub Actions Setup](.github/ACTIONS.md) for configuration details.
+
+### Manual Build (Development)
 
 ### Prerequisites
 
