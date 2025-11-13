@@ -36,6 +36,8 @@ last_updated = Gauge('yahoo_finance_last_updated', 'Unix timestamp of last succe
 SYMBOLS = os.getenv('SYMBOLS', 'AAPL,GOOGL,MSFT,TSLA,SPY,QQQ,NVDA,AMD,AMZN,META,WEX,F,GE,BAC,C,JPM').split(',')
 UPDATE_INTERVAL = int(os.getenv('UPDATE_INTERVAL', '30'))
 METRICS_PORT = int(os.getenv('METRICS_PORT', '8080'))
+MARKET_OPEN_TIME = os.getenv('MARKET_OPEN_TIME', '09:30')  # Format: HH:MM
+MARKET_CLOSE_TIME = os.getenv('MARKET_CLOSE_TIME', '16:00')  # Format: HH:MM
 
 class MetricsHandler(BaseHTTPRequestHandler):
     """Custom HTTP handler that only serves metrics during market hours"""
@@ -135,9 +137,23 @@ class FinanceExporter:
         if now_et.weekday() >= 5:  # Saturday or Sunday
             return False
             
-        # Market hours: 9:30 AM - 4:00 PM ET
-        market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-        market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+        # Parse market hours from environment variables
+        market_open_parts = MARKET_OPEN_TIME.split(':')
+        market_close_parts = MARKET_CLOSE_TIME.split(':')
+        
+        # Market hours from environment variables
+        market_open = now_et.replace(
+            hour=int(market_open_parts[0]), 
+            minute=int(market_open_parts[1]), 
+            second=0, 
+            microsecond=0
+        )
+        market_close = now_et.replace(
+            hour=int(market_close_parts[0]), 
+            minute=int(market_close_parts[1]), 
+            second=0, 
+            microsecond=0
+        )
         
         return market_open <= now_et <= market_close
         
@@ -149,11 +165,23 @@ class FinanceExporter:
         if self.is_market_open():
             return 0
             
+        # Parse market open time from environment variable
+        market_open_parts = MARKET_OPEN_TIME.split(':')
+        
         # Find next market open
-        next_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+        next_open = now_et.replace(
+            hour=int(market_open_parts[0]), 
+            minute=int(market_open_parts[1]), 
+            second=0, 
+            microsecond=0
+        )
+        
+        # Parse market close time for comparison
+        market_close_parts = MARKET_CLOSE_TIME.split(':')
+        market_close_hour = int(market_close_parts[0])
         
         # If we're past market close today or it's weekend, move to next business day
-        if now_et.hour >= 16 or now_et.weekday() >= 5:
+        if now_et.hour >= market_close_hour or now_et.weekday() >= 5:
             next_open += timedelta(days=1)
             
         # Skip weekends
@@ -165,7 +193,16 @@ class FinanceExporter:
     def get_seconds_until_market_close(self):
         """Get seconds until market close today"""
         now_et = datetime.now(self.et_tz)
-        market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+        
+        # Parse market close time from environment variable
+        market_close_parts = MARKET_CLOSE_TIME.split(':')
+        
+        market_close = now_et.replace(
+            hour=int(market_close_parts[0]), 
+            minute=int(market_close_parts[1]), 
+            second=0, 
+            microsecond=0
+        )
         
         if now_et >= market_close:
             return 0
