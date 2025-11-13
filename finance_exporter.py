@@ -12,6 +12,10 @@ from datetime import datetime, timedelta
 import pytz
 import os
 
+# Set cache location for yfinance to avoid permission issues
+if 'XDG_CACHE_HOME' in os.environ:
+    yf.set_tz_cache_location(os.environ['XDG_CACHE_HOME'])
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
