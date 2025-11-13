@@ -6,11 +6,13 @@ Simple Yahoo Finance Prometheus Exporter using yfinance directly
 import time
 import yfinance as yf
 import schedule
-from prometheus_client import start_http_server, Gauge
+from prometheus_client import Gauge, generate_latest, CONTENT_TYPE_LATEST
 import logging
 from datetime import datetime, timedelta
 import pytz
 import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse
 
 # Set cache location for yfinance to avoid permission issues
 if 'XDG_CACHE_HOME' in os.environ:
@@ -28,11 +30,59 @@ stock_open = Gauge('yahoo_finance_stock_open', 'Opening price', ['symbol'])
 stock_high = Gauge('yahoo_finance_stock_high', 'Daily high', ['symbol'])
 stock_low = Gauge('yahoo_finance_stock_low', 'Daily low', ['symbol'])
 stock_change_percent = Gauge('yahoo_finance_change_percent', 'Daily change percentage', ['symbol'])
+last_updated = Gauge('yahoo_finance_last_updated', 'Unix timestamp of last successful update')
 
 # Configuration from environment variables
 SYMBOLS = os.getenv('SYMBOLS', 'AAPL,GOOGL,MSFT,TSLA,SPY,QQQ,NVDA,AMD,AMZN,META,WEX,F,GE,BAC,C,JPM').split(',')
 UPDATE_INTERVAL = int(os.getenv('UPDATE_INTERVAL', '30'))
 METRICS_PORT = int(os.getenv('METRICS_PORT', '8080'))
+
+class MetricsHandler(BaseHTTPRequestHandler):
+    """Custom HTTP handler that only serves metrics during market hours"""
+    
+    def __init__(self, exporter, *args, **kwargs):
+        self.exporter = exporter
+        super().__init__(*args, **kwargs)
+    
+    def do_GET(self):
+        parsed_path = urlparse(self.path)
+        
+        if parsed_path.path == '/metrics':
+            if self.exporter.is_market_open():
+                # Market is open - serve current metrics
+                try:
+                    output = generate_latest()
+                    self.send_response(200)
+                    self.send_header('Content-Type', CONTENT_TYPE_LATEST)
+                    self.end_headers()
+                    self.wfile.write(output)
+                except Exception as e:
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(f'Error generating metrics: {e}'.encode())
+            else:
+                # Market is closed - return 503 Service Unavailable
+                message = "Market closed - metrics not available until next market open\n"
+                next_open_seconds = self.exporter.get_seconds_until_market_open()
+                next_open_hours = next_open_seconds // 3600
+                next_open_mins = (next_open_seconds % 3600) // 60
+                message += f"Market opens in: {next_open_hours}h {next_open_mins}m\n"
+                
+                self.send_response(503)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(message.encode())
+        else:
+            # Not /metrics endpoint
+            self.send_response(404)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Not found - try /metrics')
+    
+    def log_message(self, format, *args):
+        # Suppress default HTTP server logging
+        pass
 
 class FinanceExporter:
     def __init__(self):
@@ -157,7 +207,9 @@ class FinanceExporter:
                     
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {e}")
-                
+        
+        # Update the last_updated timestamp
+        last_updated.set(time.time())
         logger.info("Metrics update complete")
     
     def run(self):
@@ -166,10 +218,19 @@ class FinanceExporter:
         logger.info(f"Monitoring symbols: {', '.join(SYMBOLS)}")
         logger.info("Smart scheduler: Updates only during market hours, sleeps when closed")
         
-        # Start Prometheus HTTP server
-        start_http_server(METRICS_PORT)
-        logger.info(f"Prometheus metrics server started on :{METRICS_PORT}")
-        logger.info(f"Metrics available at http://localhost:{METRICS_PORT}/metrics")
+        # Start custom HTTP server that respects market hours
+        def handler_factory(*args, **kwargs):
+            return MetricsHandler(self, *args, **kwargs)
+        
+        server = HTTPServer(('', METRICS_PORT), handler_factory)
+        
+        # Start server in a separate thread to avoid blocking
+        import threading
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        
+        logger.info(f"Market-aware metrics server started on :{METRICS_PORT}")
+        logger.info(f"Metrics available at http://localhost:{METRICS_PORT}/metrics (during market hours only)")
         
         while True:
             if self.is_market_open():
