@@ -73,12 +73,50 @@ class MetricsHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-Type', 'text/plain')
                 self.end_headers()
                 self.wfile.write(message.encode())
+        elif parsed_path.path == '/healthz':
+            # Health check endpoint - always available
+            try:
+                # Simple health check - verify we can connect and app is running
+                status = {
+                    "status": "healthy",
+                    "timestamp": time.time(),
+                    "market_open": self.exporter.is_market_open()
+                }
+                
+                if self.exporter.is_market_open():
+                    status["next_market_close"] = self.exporter.get_seconds_until_market_close()
+                else:
+                    status["next_market_open"] = self.exporter.get_seconds_until_market_open()
+                
+                response = "OK\n"
+                response += f"Status: {status['status']}\n"
+                response += f"Market Open: {status['market_open']}\n"
+                
+                if "next_market_close" in status:
+                    close_hours = status["next_market_close"] // 3600
+                    close_mins = (status["next_market_close"] % 3600) // 60
+                    response += f"Market closes in: {close_hours}h {close_mins}m\n"
+                elif "next_market_open" in status:
+                    open_hours = status["next_market_open"] // 3600
+                    open_mins = (status["next_market_open"] % 3600) // 60
+                    response += f"Market opens in: {open_hours}h {open_mins}m\n"
+                
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(response.encode())
+                
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-Type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f'Health check failed: {e}'.encode())
         else:
-            # Not /metrics endpoint
+            # Not /metrics or /healthz endpoint
             self.send_response(404)
             self.send_header('Content-Type', 'text/plain')
             self.end_headers()
-            self.wfile.write(b'Not found - try /metrics')
+            self.wfile.write(b'Not found - try /metrics or /healthz')
     
     def log_message(self, format, *args):
         # Suppress default HTTP server logging
