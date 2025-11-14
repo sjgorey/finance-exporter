@@ -32,12 +32,51 @@ stock_low = Gauge('yahoo_finance_stock_low', 'Daily low', ['symbol'])
 stock_change_percent = Gauge('yahoo_finance_change_percent', 'Daily change percentage', ['symbol'])
 last_updated = Gauge('yahoo_finance_last_updated', 'Unix timestamp of last successful update')
 
-# Configuration from environment variables
-SYMBOLS = os.getenv('SYMBOLS', 'AAPL,GOOGL,MSFT,TSLA,SPY,QQQ,NVDA,AMD,AMZN,META,WEX,F,GE,BAC,C,JPM').split(',')
-UPDATE_INTERVAL = int(os.getenv('UPDATE_INTERVAL', '30'))
-METRICS_PORT = int(os.getenv('METRICS_PORT', '8080'))
-MARKET_OPEN_TIME = os.getenv('MARKET_OPEN_TIME', '09:30')  # Format: HH:MM
-MARKET_CLOSE_TIME = os.getenv('MARKET_CLOSE_TIME', '16:00')  # Format: HH:MM
+# Configuration from environment variables or mounted config files
+def load_config():
+    """Load configuration from environment variables or mounted config files"""
+    config_path = os.getenv('CONFIG_PATH', '/etc/config')
+    
+    def read_config_value(key, default_value, convert_func=str):
+        # First try environment variable
+        env_value = os.getenv(key)
+        if env_value is not None:
+            return convert_func(env_value)
+        
+        # Then try config file
+        config_file_path = os.path.join(config_path, key)
+        if os.path.exists(config_file_path):
+            try:
+                with open(config_file_path, 'r') as f:
+                    value = f.read().strip()
+                    return convert_func(value)
+            except Exception as e:
+                logger.warning(f"Error reading config file {config_file_path}: {e}")
+        
+        # Fall back to default
+        return default_value
+    
+    symbols = read_config_value('SYMBOLS', 'AAPL,GOOGL,MSFT,TSLA,SPY,QQQ,NVDA,AMD,AMZN,META,WEX,F,GE,BAC,C,JPM')
+    update_interval = read_config_value('UPDATE_INTERVAL', 30, int)
+    metrics_port = read_config_value('METRICS_PORT', 8080, int)
+    market_open_time = read_config_value('MARKET_OPEN_TIME', '09:30')
+    market_close_time = read_config_value('MARKET_CLOSE_TIME', '16:00')
+    
+    return {
+        'SYMBOLS': symbols.split(','),
+        'UPDATE_INTERVAL': update_interval,
+        'METRICS_PORT': metrics_port,
+        'MARKET_OPEN_TIME': market_open_time,
+        'MARKET_CLOSE_TIME': market_close_time
+    }
+
+# Load configuration
+config = load_config()
+SYMBOLS = config['SYMBOLS']
+UPDATE_INTERVAL = config['UPDATE_INTERVAL']
+METRICS_PORT = config['METRICS_PORT']
+MARKET_OPEN_TIME = config['MARKET_OPEN_TIME']
+MARKET_CLOSE_TIME = config['MARKET_CLOSE_TIME']
 
 class MetricsHandler(BaseHTTPRequestHandler):
     """Custom HTTP handler that only serves metrics during market hours"""
