@@ -13,6 +13,7 @@ import pytz
 import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
+import requests
 
 # Set cache location for yfinance to avoid permission issues
 if 'XDG_CACHE_HOME' in os.environ:
@@ -250,31 +251,59 @@ class FinanceExporter:
         
     def get_quote(self, symbol):
         """Get stock quote directly from Yahoo Finance using yfinance"""
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.info
-            hist = ticker.history(period="1d")
-            
-            if hist.empty:
-                logger.warning(f"No historical data for {symbol}")
-                return None
+        max_retries = 2
+        retry_count = 0
+        
+        while retry_count <= max_retries:
+            try:
+                ticker = yf.Ticker(symbol)
+                info = ticker.info
+                hist = ticker.history(period="1d")
                 
-            latest = hist.iloc[-1]
-            
-            return {
-                'symbol': symbol,
-                'currentPrice': info.get('currentPrice', latest['Close']),
-                'open': latest['Open'],
-                'high': latest['High'],
-                'low': latest['Low'],
-                'volume': latest['Volume'],
-                'marketCap': info.get('marketCap'),
-                'previousClose': info.get('previousClose', latest['Close']),
-            }
-            
-        except Exception as e:
-            logger.error(f"Error fetching {symbol}: {e}")
-            return None
+                if hist.empty:
+                    logger.warning(f"No historical data for {symbol}")
+                    return None
+                    
+                latest = hist.iloc[-1]
+                
+                return {
+                    'symbol': symbol,
+                    'currentPrice': info.get('currentPrice', latest['Close']),
+                    'open': latest['Open'],
+                    'high': latest['High'],
+                    'low': latest['Low'],
+                    'volume': latest['Volume'],
+                    'marketCap': info.get('marketCap'),
+                    'previousClose': info.get('previousClose', latest['Close']),
+                }
+                
+            except requests.exceptions.HTTPError as e:
+                if hasattr(e, 'response') and e.response.status_code == 429:
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        logger.warning(f"Rate limited (429) for {symbol}. Waiting 5 minutes before retry {retry_count}/{max_retries}...")
+                        time.sleep(300)  # Wait 5 minutes (300 seconds)
+                    else:
+                        logger.error(f"Rate limit exceeded for {symbol} after {max_retries} retries")
+                        return None
+                else:
+                    logger.error(f"HTTP error fetching {symbol}: {e}")
+                    return None
+            except Exception as e:
+                # Check if the exception contains a 429 status code in its string representation
+                if '429' in str(e):
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        logger.warning(f"Rate limited (429) for {symbol}. Waiting 5 minutes before retry {retry_count}/{max_retries}...")
+                        time.sleep(300)  # Wait 5 minutes (300 seconds)
+                    else:
+                        logger.error(f"Rate limit exceeded for {symbol} after {max_retries} retries")
+                        return None
+                else:
+                    logger.error(f"Error fetching {symbol}: {e}")
+                    return None
+        
+        return None
     
     def update_metrics(self):
         """Update Prometheus metrics for all symbols"""            
